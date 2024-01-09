@@ -1,0 +1,246 @@
+#!/usr/bin/env python
+# coding: utf-8
+
+# In[14]:
+
+
+import pandas as pd
+import matplotlib.pyplot as plt
+import numpy as np
+def merge_stats(adv_stats, reg_stats):
+    """
+    Merge advanced player statistics with regular player statistics based on the 'Player' column.
+    Remove duplicate entries and return the merged DataFrame.
+    """
+    adv_df = pd.read_csv(adv_stats)
+    reg_df = pd.read_csv(reg_stats)
+
+    merged_df = pd.merge(adv_df, reg_df, on='Player', how='inner', suffixes=(' ', ' ')) #got rid of suffixes to make data easier to read
+    
+    merged_df = merged_df.drop(['Player-additional'], axis=1) #dropped this column, did nothing for us
+    
+    merged_df.drop_duplicates(subset=['Player'], keep='first', inplace=True, ignore_index=True) #some duplicates, dropped ones with least minutes
+
+    return merged_df
+
+def preprocess_data(df):
+    """
+    Remove duplicate entries and fill missing values using forward fill.
+    """
+    df = df.drop_duplicates(subset=['Player'], keep='first', inplace=False, ignore_index=True) #drops duplicates and keeps player with most minutes
+    df = df.fillna(method='ffill')  #ffill
+    return df
+
+def filter_subsets(df, threshold=20):
+    """
+    Divide the DataFrame into two subsets based on a specified threshold for 'PTS' (points).
+    Return two DataFrames: one with players scoring above the threshold, and one below.
+    """
+    high_pts_players = df[df['PTS'] > threshold]
+    low_pts_players = df[df['PTS'] <= threshold]
+    return high_pts_players, low_pts_players #this gives us another way to look at the data, with 'high' points players and 'low points'
+
+def sort_data(df, column_name='PTS'):
+    """
+    Sort the DataFrame based on a specified column in descending order.
+    """
+    sorted_df = df.sort_values(by=column_name, ascending=False)
+    return sorted_df
+
+def pivot_and_stack(df, index_column, columns_column, values_column):
+    """
+    Pivot the DataFrame and then stack it to create a new DataFrame.
+    """
+    pivoted_df = df.pivot(index=index_column, columns=columns_column, values=values_column)
+    stacked_df = pivoted_df.stack()
+    return stacked_df #creates pivot table, define columns later on
+
+def top3(df):
+    """
+    Create a bar chart to display the top 3 points-per-game (PPG) players for each position.
+    """
+    df['Pos'] = df['Pos'].str.split('-').str[0] #got rid of secondary positions
+
+    pos_order = ['PG', 'SG', 'SF', 'PF', 'C'] #set typical order of nba positions
+
+    df['Pos'] = pd.Categorical(df['Pos'], categories=pos_order, ordered=True) 
+
+    top3_players = df.groupby('Pos').apply(lambda x: x.nlargest(3, 'PTS')).reset_index(drop=True) #finds 3 largest for each
+
+    # Plot the bar chart
+    fig, ax = plt.subplots(figsize=(10, 6))
+    for pos, group in top3_players.groupby('Pos'):
+        bars = ax.bar(group['Player'], group['PTS'], label=pos)
+
+        for bar in bars:
+            height = bar.get_height()
+            ax.text(bar.get_x() + bar.get_width() / 2, height, f'{height}',
+                    ha='center', va='bottom', fontsize=8, color='black')
+
+    ax.set_xlabel('Player')
+    ax.set_ylabel('Points Per Game')
+    ax.set_title('Top 3 PPG for Each Position 2022-2023')
+    ax.legend(fontsize = 'x-small')
+
+    ax.set_xticklabels(ax.get_xticklabels(), rotation=60)
+
+    plt.tight_layout()
+    plt.show()
+
+def calculate_percentage(df):
+    """
+    Calculate the combined win percentage for home and away teams and return the result as a Series.
+    """
+    df['Winner'] = df.apply(lambda row: 'Away' if row['PTS'] > row['PTS.1'] else 'Home', axis=1) #finds whcih team won
+
+    win_counts = df['Winner'].value_counts() #counts 
+
+    total_games = len(df)
+    win_percentages = win_counts / total_games
+
+    return win_percentages
+
+def plot_pie(win_percentages):
+    """
+    Plot a pie chart to visualize the combined win percentage for home and away teams.
+    """
+    labels = win_percentages.index
+    sizes = win_percentages.values
+    colors = ['lightcoral', 'lightskyblue']
+
+    plt.pie(sizes, labels=labels, colors=colors, autopct='%1.1f%%', startangle=140)
+    plt.axis('equal')  
+
+    plt.title('Combined Win Percentage for Home vs Away Teams')
+    plt.show()
+
+def plot_team_perf(df, teams):
+    """
+    Plot the total points scored by specified teams over the course of the season.
+    """
+    df_filtered = df[df['Home/Neutral'].isin(teams) | df['Visitor/Neutral'].isin(teams)].copy() #checks if the teams we selected is playing that game
+
+    df_filtered = df_filtered[(df_filtered['Home/Neutral'].isin(teams)) | (df_filtered['Visitor/Neutral'].isin(teams))]
+
+    df_filtered['Total_PTS'] = df_filtered.apply(lambda row: row['PTS.1'] if row['Home/Neutral'] in teams else row['PTS'], axis=1)
+
+    df_filtered['Date'] = pd.to_datetime(df_filtered['Date']) #conevrts date
+    
+    plt.figure(figsize=(12, 6))
+    team_colors = {'Milwaukee Bucks': 'darkgreen', 'Philadelphia 76ers': 'blue', 'Golden State Warriors': 'gold'} #sets team colors based on jerseys 
+
+
+    for team in teams:
+        team_df = df_filtered[(df_filtered['Home/Neutral'] == team) | (df_filtered['Visitor/Neutral'] == team)]
+        plt.plot(team_df['Date'], team_df['Total_PTS'], label=f'{team}',color=team_colors[team])
+
+    plt.xlabel('Date')
+    plt.ylabel('Total Points Scored')
+    plt.title('Team Performances over the 2022-2023 Season')
+    plt.legend()
+
+    date_subset = df_filtered['Date'].unique()[::int(len(df_filtered['Date'].unique()) / 10)] #found on stackoverflow to get simpler dates
+
+    plt.show()
+
+
+
+def boxchart(df):
+    """
+    Plot a boxplot of the average points per game for players in the given DataFrame.
+    """
+    labels = df["Player"]
+    data = df['PTS']
+    plt.boxplot(data)
+    plt.title('Boxplot of Average Points per Game')
+    plt.xlabel('Players')
+    plt.ylabel('Points')
+    plt.show()
+def scatterplot(df):
+    fig, ax = plt.subplots(figsize=(8,8))
+    y = df['TS%']
+    x = df['PTS']
+    plt.xticks([0, 20, 40, 60, 80, 100], ['0%', '20%', '40%', '60%', '80%', '100%']) #set xaxis ticks to be percentage, not decimal
+    ax.scatter(df['TS%'] * 100, df['PTS'], color='orange')
+    ax.set_title('Scatterplot of TS% and PTS')
+    ax.set_xlabel('True Shooting %')
+    ax.set_ylabel('Points per Game')
+    ax.legend
+    plt.show()
+    
+
+
+def stackplot(df):
+    fig, ax = plt.subplots()
+    ax.stem(df['PTS'], df['PER'])
+    #ax.set(xlim=(0, 8), xticks=np.arange(1, 8), ylim=(0, 30), yticks=np.arange(1, 30))
+    plt.xlabel('PTS')
+    plt.ylabel('PER')
+    plt.title('Stem Plot of PTS and PER') #PER is an advanced stat that measures a players efficiency 
+    plt.show()
+
+
+
+
+#RUN MERGED DF
+merged_df = merge_stats('advanced_stats.csv', 'player_stats.csv')
+print("Merged DataFrame:")
+print(merged_df)
+
+#RUN PROCESSED DF
+processed_df = preprocess_data(merged_df)
+print("\nProcessed DataFrame:")
+print(processed_df)
+
+#RUN HIGH-LOW
+high_pts_players, low_pts_players = filter_subsets(processed_df)
+print("\nHigh PTS Players:")
+print(high_pts_players)
+print("\nLow PTS Players:")
+print(low_pts_players)
+
+#RUN SORTED DF
+sorted_df = sort_data(processed_df, 'PTS')
+print("\nSorted DataFrame:")
+print(sorted_df)
+
+#RUN PIVOT
+index_col = 'Player'
+columns_col = 'PER'  
+values_col = '3P'
+stacked_data = pivot_and_stack(processed_df, index_col, columns_col, values_col)
+print("\nStacked DataFrame:")
+print(stacked_data)
+
+df = pd.read_csv('season_stats.csv')
+teams_to_plot = ['Milwaukee Bucks', 'Philadelphia 76ers', 'Golden State Warriors']
+plot_team_perf(df, teams_to_plot)
+
+top3_df = pd.read_csv('player_stats.csv')
+top3(top3_df)
+
+boxchart(merged_df)
+
+pie_df = pd.read_csv('season_stats.csv')
+win_percentages = calculate_percentage(pie_df)
+plot_pie(win_percentages)
+
+scatterplot(merged_df)
+
+stackplot(merged_df)
+
+
+
+# 
+
+# In[ ]:
+
+
+
+
+
+# In[ ]:
+
+
+
+
